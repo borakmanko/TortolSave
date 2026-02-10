@@ -37,6 +37,38 @@ interface TransactionDao {
     @Query("SELECT category, SUM(amount) as total FROM transactions WHERE type = 'Expense' GROUP BY category")
     fun getExpensesByCategory(): Flow<List<CategoryTotal>>
 
+    // NEW: Date range filtering queries
+    @Query("""
+        SELECT * FROM transactions 
+        WHERE date >= :startDate AND date <= :endDate 
+        ORDER BY date DESC 
+        LIMIT :limit OFFSET :offset
+    """)
+    fun getTransactionsInDateRange(
+        startDate: Long,
+        endDate: Long,
+        limit: Int,
+        offset: Int
+    ): Flow<List<Transaction>>
+
+    @Query("""
+        SELECT COUNT(*) FROM transactions 
+        WHERE date >= :startDate AND date <= :endDate
+    """)
+    fun getTransactionCountInDateRange(startDate: Long, endDate: Long): Flow<Int>
+
+    @Query("""
+        SELECT SUM(amount) FROM transactions 
+        WHERE type = 'Income' AND date >= :startDate AND date <= :endDate
+    """)
+    fun getTotalIncomeInDateRange(startDate: Long, endDate: Long): Flow<Double?>
+
+    @Query("""
+        SELECT SUM(amount) FROM transactions 
+        WHERE type = 'Expense' AND date >= :startDate AND date <= :endDate
+    """)
+    fun getTotalExpensesInDateRange(startDate: Long, endDate: Long): Flow<Double?>
+
     // Templates
     @Insert
     suspend fun insertTemplate(template: TransactionTemplate)
@@ -96,9 +128,49 @@ interface TransactionDao {
     ORDER BY total DESC
 """)
     fun getCategoryBreakdown(startOfMonth: Long, endOfMonth: Long): Flow<List<CategoryTotal>>
+
+    // Daily trend data (for current month)
+    @Query("""
+        SELECT 
+            strftime('%d', datetime(date/1000, 'unixepoch', 'localtime')) as day,
+            COALESCE(SUM(CASE WHEN type = 'Income' THEN amount ELSE 0 END), 0) as income,
+            COALESCE(SUM(CASE WHEN type = 'Expense' THEN amount ELSE 0 END), 0) as expense
+        FROM transactions
+        WHERE date >= :startDate AND date <= :endDate
+        GROUP BY day
+        ORDER BY day ASC
+    """)
+    fun getDailyTrends(startDate: Long, endDate: Long): Flow<List<DailyTrend>>
+
+    // Monthly trend data (all 12 months of current year)
+    @Query("""
+        SELECT 
+            strftime('%m', datetime(date/1000, 'unixepoch', 'localtime')) as month,
+            strftime('%Y', datetime(date/1000, 'unixepoch', 'localtime')) as year,
+            COALESCE(SUM(CASE WHEN type = 'Income' THEN amount ELSE 0 END), 0) as income,
+            COALESCE(SUM(CASE WHEN type = 'Expense' THEN amount ELSE 0 END), 0) as expense
+        FROM transactions
+        WHERE strftime('%Y', datetime(date/1000, 'unixepoch', 'localtime')) = strftime('%Y', 'now', 'localtime')
+        GROUP BY year, month
+        ORDER BY month ASC
+    """)
+    fun getMonthlyTrends(): Flow<List<MonthlyTrend>>
 }
 
 data class CategoryTotal(
     val category: String,
     val total: Double
+)
+
+data class DailyTrend(
+    val day: String,
+    val income: Double,
+    val expense: Double
+)
+
+data class MonthlyTrend(
+    val month: String,
+    val year: String,
+    val income: Double,
+    val expense: Double
 )

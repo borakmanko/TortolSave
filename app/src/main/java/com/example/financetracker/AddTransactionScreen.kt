@@ -16,19 +16,18 @@ import java.text.SimpleDateFormat
 import java.util.*
 import androidx.compose.ui.unit.Dp
 
-// AddTransactionScreen.kt - Replace the existing function
-// AddTransactionScreen.kt - Replace the Column with a scrollable one
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddTransactionScreen(dao: TransactionDao) {
     val screenSize = rememberPhoneScreenSize()
     val padding = getResponsivePadding()
     val spacing = getResponsiveSpacing()
-    val scrollState = rememberScrollState() // Add this
+    val scrollState = rememberScrollState()
 
     var amount by remember { mutableStateOf("") }
     var type by remember { mutableStateOf("Expense") }
     var category by remember { mutableStateOf("") }
+    var customCategory by remember { mutableStateOf("") } // Add this state
     var description by remember { mutableStateOf("") }
     var selectedDate by remember { mutableStateOf(System.currentTimeMillis()) }
     var showDatePicker by remember { mutableStateOf(false) }
@@ -59,11 +58,10 @@ fun AddTransactionScreen(dao: TransactionDao) {
         PhoneScreenSize.Large -> 64.dp
     }
 
-    // Replace Column with this scrollable version
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(scrollState) // Add scrolling here
+            .verticalScroll(scrollState)
             .padding(padding)
     ) {
         Text(
@@ -90,6 +88,7 @@ fun AddTransactionScreen(dao: TransactionDao) {
                     onClick = {
                         type = "Expense"
                         category = ""
+                        customCategory = "" // Reset custom category
                     },
                     label = { Text("Expense", style = MaterialTheme.typography.bodyMedium) },
                     modifier = Modifier.weight(1f).padding(end = 4.dp),
@@ -103,6 +102,7 @@ fun AddTransactionScreen(dao: TransactionDao) {
                     onClick = {
                         type = "Income"
                         category = ""
+                        customCategory = "" // Reset custom category
                     },
                     label = { Text("Income", style = MaterialTheme.typography.bodyMedium) },
                     modifier = Modifier.weight(1f).padding(start = 4.dp),
@@ -152,18 +152,23 @@ fun AddTransactionScreen(dao: TransactionDao) {
         CategoryChipsGrid(
             categories = categories,
             selectedCategory = category,
-            onCategorySelected = { category = it },
+            onCategorySelected = {
+                category = it
+                if (it != "Other") {
+                    customCategory = "" // Clear custom category if not "Other"
+                }
+            },
             screenSize = screenSize,
             spacing = spacing
         )
 
         Spacer(modifier = Modifier.height(spacing))
 
-        // Custom category input
+        // Custom category input - FIXED VERSION
         if (category == "Other") {
             OutlinedTextField(
-                value = if (category == "Other") "" else category,
-                onValueChange = { category = it },
+                value = customCategory,
+                onValueChange = { customCategory = it },
                 label = { Text("Custom Category") },
                 placeholder = { Text("Enter category name") },
                 modifier = Modifier.fillMaxWidth()
@@ -219,17 +224,26 @@ fun AddTransactionScreen(dao: TransactionDao) {
 
         Spacer(modifier = Modifier.height(spacing * 2))
 
-        // Save button
+        // Save button - UPDATED to use customCategory when "Other" is selected
         Button(
             onClick = {
                 val amountValue = amount.toDoubleOrNull()
-                if (amountValue != null && amountValue > 0 && category.isNotBlank()) {
+                // Determine the final category to save
+                val finalCategory = if (category == "Other" && customCategory.isNotBlank()) {
+                    customCategory
+                } else if (category != "Other") {
+                    category
+                } else {
+                    ""
+                }
+
+                if (amountValue != null && amountValue > 0 && finalCategory.isNotBlank()) {
                     scope.launch {
                         dao.insert(
                             Transaction(
                                 amount = amountValue,
                                 type = type,
-                                category = if (category == "Other") description else category,
+                                category = finalCategory,
                                 description = description,
                                 date = selectedDate
                             )
@@ -237,6 +251,7 @@ fun AddTransactionScreen(dao: TransactionDao) {
                         amount = ""
                         description = ""
                         category = ""
+                        customCategory = ""
                         selectedDate = System.currentTimeMillis()
                         showSuccessMessage = true
 
@@ -252,7 +267,7 @@ fun AddTransactionScreen(dao: TransactionDao) {
                 .height(buttonHeight),
             enabled = amount.toDoubleOrNull() != null &&
                     amount.toDoubleOrNull()!! > 0 &&
-                    category.isNotBlank()
+                    (category.isNotBlank() && (category != "Other" || customCategory.isNotBlank()))
         ) {
             Text(
                 text = "Save Transaction",
@@ -298,6 +313,7 @@ fun AddTransactionScreen(dao: TransactionDao) {
         )
     }
 }
+
 // Helper composable for category chips with adaptive layout
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -347,6 +363,7 @@ fun CategoryChipsGrid(
         }
     }
 }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DatePickerDialog(

@@ -1,13 +1,11 @@
 //HomeScreen.kt
 package com.example.financetracker
 
-
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,14 +27,51 @@ fun HomeScreen(dao: TransactionDao) {
     var currentPage by remember { mutableStateOf(0) }
     val pageSize = 10
 
-    val transactions by dao.getTransactionsPaginated(
-        limit = pageSize,
-        offset = currentPage * pageSize
-    ).collectAsState(initial = emptyList())
+    // Date filtering states
+    var showDatePicker by remember { mutableStateOf(false) }
+    var selectedStartDate by remember { mutableStateOf<Long?>(null) }
+    var selectedEndDate by remember { mutableStateOf<Long?>(null) }
+    var dateFilterMode by remember { mutableStateOf<DateFilterMode>(DateFilterMode.ALL) }
 
-    val totalCount by dao.getTransactionCount().collectAsState(initial = 0)
-    val totalIncome by dao.getTotalIncome().collectAsState(initial = 0.0)
-    val totalExpenses by dao.getTotalExpenses().collectAsState(initial = 0.0)
+    // Balance visibility state (default hidden)
+    var isBalanceVisible by remember { mutableStateOf(false) }
+
+    // Get filtered transactions based on date range
+    val transactions by if (selectedStartDate != null && selectedEndDate != null) {
+        dao.getTransactionsInDateRange(
+            startDate = selectedStartDate!!,
+            endDate = selectedEndDate!!,
+            limit = pageSize,
+            offset = currentPage * pageSize
+        ).collectAsState(initial = emptyList())
+    } else {
+        dao.getTransactionsPaginated(
+            limit = pageSize,
+            offset = currentPage * pageSize
+        ).collectAsState(initial = emptyList())
+    }
+
+    val totalCount by if (selectedStartDate != null && selectedEndDate != null) {
+        dao.getTransactionCountInDateRange(selectedStartDate!!, selectedEndDate!!)
+            .collectAsState(initial = 0)
+    } else {
+        dao.getTransactionCount().collectAsState(initial = 0)
+    }
+
+    // Get totals based on filter
+    val totalIncome by if (selectedStartDate != null && selectedEndDate != null) {
+        dao.getTotalIncomeInDateRange(selectedStartDate!!, selectedEndDate!!)
+            .collectAsState(initial = 0.0)
+    } else {
+        dao.getTotalIncome().collectAsState(initial = 0.0)
+    }
+
+    val totalExpenses by if (selectedStartDate != null && selectedEndDate != null) {
+        dao.getTotalExpensesInDateRange(selectedStartDate!!, selectedEndDate!!)
+            .collectAsState(initial = 0.0)
+    } else {
+        dao.getTotalExpenses().collectAsState(initial = 0.0)
+    }
 
     val balance = (totalIncome ?: 0.0) - (totalExpenses ?: 0.0)
     val totalPages = (totalCount + pageSize - 1) / pageSize
@@ -46,13 +81,14 @@ fun HomeScreen(dao: TransactionDao) {
 
     val scope = rememberCoroutineScope()
     val currencyFormat = NumberFormat.getCurrencyInstance(Locale("en", "PH"))
+    val dateFormat = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(padding)
     ) {
-        // Balance Card
+        // Balance Card with visibility toggle
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -60,62 +96,99 @@ fun HomeScreen(dao: TransactionDao) {
             )
         ) {
             Column(
-                modifier = Modifier.padding(padding),
-                horizontalAlignment = Alignment.CenterHorizontally
+                modifier = Modifier.padding(padding)
             ) {
-                Text(
-                    text = "Current Balance",
-                    style = when (screenSize) {
-                        PhoneScreenSize.Small -> MaterialTheme.typography.titleSmall
-                        else -> MaterialTheme.typography.titleMedium
-                    }
-                )
-                Text(
-                    text = currencyFormat.format(balance),
-                    style = when (screenSize) {
-                        PhoneScreenSize.Small -> MaterialTheme.typography.headlineMedium
-                        PhoneScreenSize.Regular -> MaterialTheme.typography.headlineLarge
-                        PhoneScreenSize.Large -> MaterialTheme.typography.displaySmall
-                    },
-                    fontWeight = FontWeight.Bold,
-                    color = if (balance >= 0)
-                        MaterialTheme.colorScheme.primary
-                    else
-                        MaterialTheme.colorScheme.error
-                )
-
-                Spacer(modifier = Modifier.height(spacing))
-
+                // Header row with title and eye icon
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            "Income",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        Text(
-                            currencyFormat.format(totalIncome ?: 0.0),
-                            style = when (screenSize) {
-                                PhoneScreenSize.Small -> MaterialTheme.typography.bodyMedium
-                                else -> MaterialTheme.typography.bodyLarge
-                            },
-                            color = MaterialTheme.colorScheme.primary
+                    Text(
+                        text = "Current Balance",
+                        style = when (screenSize) {
+                            PhoneScreenSize.Small -> MaterialTheme.typography.titleSmall
+                            else -> MaterialTheme.typography.titleMedium
+                        }
+                    )
+                    IconButton(onClick = { isBalanceVisible = !isBalanceVisible }) {
+                        Icon(
+                            imageVector = if (isBalanceVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                            contentDescription = if (isBalanceVisible) "Hide balance" else "Show balance",
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer
                         )
                     }
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                }
+
+                if (isBalanceVisible) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
                         Text(
-                            "Expenses",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        Text(
-                            currencyFormat.format(totalExpenses ?: 0.0),
+                            text = currencyFormat.format(balance),
                             style = when (screenSize) {
-                                PhoneScreenSize.Small -> MaterialTheme.typography.bodyMedium
-                                else -> MaterialTheme.typography.bodyLarge
+                                PhoneScreenSize.Small -> MaterialTheme.typography.headlineMedium
+                                PhoneScreenSize.Regular -> MaterialTheme.typography.headlineLarge
+                                PhoneScreenSize.Large -> MaterialTheme.typography.displaySmall
                             },
-                            color = MaterialTheme.colorScheme.error
+                            fontWeight = FontWeight.Bold,
+                            color = if (balance >= 0)
+                                MaterialTheme.colorScheme.primary
+                            else
+                                MaterialTheme.colorScheme.error
+                        )
+
+                        Spacer(modifier = Modifier.height(spacing))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    "Income",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Text(
+                                    currencyFormat.format(totalIncome ?: 0.0),
+                                    style = when (screenSize) {
+                                        PhoneScreenSize.Small -> MaterialTheme.typography.bodyMedium
+                                        else -> MaterialTheme.typography.bodyLarge
+                                    },
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    "Expenses",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Text(
+                                    currencyFormat.format(totalExpenses ?: 0.0),
+                                    style = when (screenSize) {
+                                        PhoneScreenSize.Small -> MaterialTheme.typography.bodyMedium
+                                        else -> MaterialTheme.typography.bodyLarge
+                                    },
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    // Show asterisks when hidden
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "••••••",
+                            style = when (screenSize) {
+                                PhoneScreenSize.Small -> MaterialTheme.typography.headlineMedium
+                                PhoneScreenSize.Regular -> MaterialTheme.typography.headlineLarge
+                                PhoneScreenSize.Large -> MaterialTheme.typography.displaySmall
+                            },
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
@@ -124,7 +197,54 @@ fun HomeScreen(dao: TransactionDao) {
 
         Spacer(modifier = Modifier.height(spacing))
 
-        // Recent Transactions Header
+        // Date filter info card (if active)
+        if (selectedStartDate != null && selectedEndDate != null) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Filtered by date:",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                        Text(
+                            text = "${dateFormat.format(Date(selectedStartDate!!))} - ${dateFormat.format(Date(selectedEndDate!!))}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
+                    IconButton(
+                        onClick = {
+                            selectedStartDate = null
+                            selectedEndDate = null
+                            dateFilterMode = DateFilterMode.ALL
+                            currentPage = 0
+                        }
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Clear filter",
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(spacing))
+        }
+
+        // Recent Transactions Header with Date Filter Button
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -137,32 +257,67 @@ fun HomeScreen(dao: TransactionDao) {
                     else -> MaterialTheme.typography.titleLarge
                 }
             )
-            Text(
-                text = "Page ${currentPage + 1} of ${maxOf(totalPages, 1)}",
-                style = MaterialTheme.typography.bodySmall
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                if (totalPages > 1) {
+                    Text(
+                        text = "Page ${currentPage + 1}/${totalPages}",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                IconButton(onClick = { showDatePicker = true }) {
+                    Icon(
+                        Icons.Default.CalendarToday,
+                        contentDescription = "Filter by date",
+                        tint = if (selectedStartDate != null)
+                            MaterialTheme.colorScheme.primary
+                        else
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
 
         Spacer(modifier = Modifier.height(spacing))
 
         // Transaction List
-        LazyColumn(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(spacing)
-        ) {
-            items(transactions, key = { it.id }) { transaction ->
-                TransactionCard(
-                    transaction = transaction,
-                    onEdit = {
-                        editingTransaction = transaction
-                        showEditDialog = true
-                    },
-                    onDelete = {
-                        scope.launch {
-                            dao.delete(transaction)
-                        }
-                    }
+        if (transactions.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (selectedStartDate != null)
+                        "No transactions in this date range"
+                    else
+                        "No transactions yet",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(spacing)
+            ) {
+                items(transactions, key = { it.id }) { transaction ->
+                    TransactionCard(
+                        transaction = transaction,
+                        onEdit = {
+                            editingTransaction = transaction
+                            showEditDialog = true
+                        },
+                        onDelete = {
+                            scope.launch {
+                                dao.delete(transaction)
+                            }
+                        }
+                    )
+                }
             }
         }
 
@@ -191,6 +346,21 @@ fun HomeScreen(dao: TransactionDao) {
         }
     }
 
+    // Date Filter Dialog
+    if (showDatePicker) {
+        DateRangePickerDialog(
+            currentMode = dateFilterMode,
+            onDismiss = { showDatePicker = false },
+            onDateRangeSelected = { mode, start, end ->
+                dateFilterMode = mode
+                selectedStartDate = start
+                selectedEndDate = end
+                currentPage = 0
+                showDatePicker = false
+            }
+        )
+    }
+
     if (showEditDialog && editingTransaction != null) {
         EditTransactionDialog(
             transaction = editingTransaction!!,
@@ -204,6 +374,254 @@ fun HomeScreen(dao: TransactionDao) {
         )
     }
 }
+
+enum class DateFilterMode {
+    ALL,
+    TODAY,
+    THIS_WEEK,
+    THIS_MONTH,
+    CUSTOM
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DateRangePickerDialog(
+    currentMode: DateFilterMode,
+    onDismiss: () -> Unit,
+    onDateRangeSelected: (DateFilterMode, Long, Long) -> Unit
+) {
+    var selectedMode by remember { mutableStateOf(currentMode) }
+    var customStartDate by remember { mutableStateOf<Long?>(null) }
+    var customEndDate by remember { mutableStateOf<Long?>(null) }
+    var showStartPicker by remember { mutableStateOf(false) }
+    var showEndPicker by remember { mutableStateOf(false) }
+
+    val dateFormat = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Filter by Date") },
+        text = {
+            Column {
+                // Quick filter options
+                DateFilterOption(
+                    label = "All Transactions",
+                    isSelected = selectedMode == DateFilterMode.ALL,
+                    onClick = { selectedMode = DateFilterMode.ALL }
+                )
+
+                DateFilterOption(
+                    label = "Today",
+                    isSelected = selectedMode == DateFilterMode.TODAY,
+                    onClick = { selectedMode = DateFilterMode.TODAY }
+                )
+
+                DateFilterOption(
+                    label = "This Week",
+                    isSelected = selectedMode == DateFilterMode.THIS_WEEK,
+                    onClick = { selectedMode = DateFilterMode.THIS_WEEK }
+                )
+
+                DateFilterOption(
+                    label = "This Month",
+                    isSelected = selectedMode == DateFilterMode.THIS_MONTH,
+                    onClick = { selectedMode = DateFilterMode.THIS_MONTH }
+                )
+
+                Divider(modifier = Modifier.padding(vertical = 8.dp))
+
+                // Custom date range
+                DateFilterOption(
+                    label = "Custom Range",
+                    isSelected = selectedMode == DateFilterMode.CUSTOM,
+                    onClick = { selectedMode = DateFilterMode.CUSTOM }
+                )
+
+                if (selectedMode == DateFilterMode.CUSTOM) {
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    OutlinedButton(
+                        onClick = { showStartPicker = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = customStartDate?.let {
+                                "From: ${dateFormat.format(Date(it))}"
+                            } ?: "Select Start Date"
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    OutlinedButton(
+                        onClick = { showEndPicker = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = customEndDate?.let {
+                                "To: ${dateFormat.format(Date(it))}"
+                            } ?: "Select End Date"
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    when (selectedMode) {
+                        DateFilterMode.ALL -> onDismiss()
+                        DateFilterMode.TODAY -> {
+                            val cal = Calendar.getInstance()
+                            cal.set(Calendar.HOUR_OF_DAY, 0)
+                            cal.set(Calendar.MINUTE, 0)
+                            cal.set(Calendar.SECOND, 0)
+                            val start = cal.timeInMillis
+
+                            cal.set(Calendar.HOUR_OF_DAY, 23)
+                            cal.set(Calendar.MINUTE, 59)
+                            cal.set(Calendar.SECOND, 59)
+                            val end = cal.timeInMillis
+
+                            onDateRangeSelected(DateFilterMode.TODAY, start, end)
+                        }
+                        DateFilterMode.THIS_WEEK -> {
+                            val cal = Calendar.getInstance()
+                            cal.set(Calendar.DAY_OF_WEEK, cal.firstDayOfWeek)
+                            cal.set(Calendar.HOUR_OF_DAY, 0)
+                            cal.set(Calendar.MINUTE, 0)
+                            cal.set(Calendar.SECOND, 0)
+                            val start = cal.timeInMillis
+
+                            cal.add(Calendar.DAY_OF_WEEK, 6)
+                            cal.set(Calendar.HOUR_OF_DAY, 23)
+                            cal.set(Calendar.MINUTE, 59)
+                            cal.set(Calendar.SECOND, 59)
+                            val end = cal.timeInMillis
+
+                            onDateRangeSelected(DateFilterMode.THIS_WEEK, start, end)
+                        }
+                        DateFilterMode.THIS_MONTH -> {
+                            val cal = Calendar.getInstance()
+                            cal.set(Calendar.DAY_OF_MONTH, 1)
+                            cal.set(Calendar.HOUR_OF_DAY, 0)
+                            cal.set(Calendar.MINUTE, 0)
+                            cal.set(Calendar.SECOND, 0)
+                            val start = cal.timeInMillis
+
+                            cal.set(Calendar.DAY_OF_MONTH, cal.getActualMaximum(Calendar.DAY_OF_MONTH))
+                            cal.set(Calendar.HOUR_OF_DAY, 23)
+                            cal.set(Calendar.MINUTE, 59)
+                            cal.set(Calendar.SECOND, 59)
+                            val end = cal.timeInMillis
+
+                            onDateRangeSelected(DateFilterMode.THIS_MONTH, start, end)
+                        }
+                        DateFilterMode.CUSTOM -> {
+                            if (customStartDate != null && customEndDate != null) {
+                                onDateRangeSelected(DateFilterMode.CUSTOM, customStartDate!!, customEndDate!!)
+                            }
+                        }
+                    }
+                },
+                enabled = when (selectedMode) {
+                    DateFilterMode.CUSTOM -> customStartDate != null && customEndDate != null
+                    else -> true
+                }
+            ) {
+                Text(if (selectedMode == DateFilterMode.ALL) "Clear Filter" else "Apply")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+
+    // Start Date Picker
+    if (showStartPicker) {
+        SingleDatePickerDialog(
+            selectedDate = customStartDate ?: System.currentTimeMillis(),
+            onDateSelected = {
+                customStartDate = it
+                showStartPicker = false
+            },
+            onDismiss = { showStartPicker = false }
+        )
+    }
+
+    // End Date Picker
+    if (showEndPicker) {
+        SingleDatePickerDialog(
+            selectedDate = customEndDate ?: System.currentTimeMillis(),
+            onDateSelected = {
+                customEndDate = it
+                showEndPicker = false
+            },
+            onDismiss = { showEndPicker = false }
+        )
+    }
+}
+
+@Composable
+fun DateFilterOption(
+    label: String,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(
+            selected = isSelected,
+            onClick = onClick
+        )
+        Text(
+            text = label,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 8.dp),
+            style = MaterialTheme.typography.bodyMedium
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SingleDatePickerDialog(
+    selectedDate: Long,
+    onDateSelected: (Long) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val datePickerState = rememberDatePickerState(
+        initialSelectedDateMillis = selectedDate
+    )
+
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    datePickerState.selectedDateMillis?.let { onDateSelected(it) }
+                }
+            ) {
+                Text("OK")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    ) {
+        DatePicker(state = datePickerState)
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TransactionCard(

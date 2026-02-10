@@ -20,6 +20,57 @@ import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.roundToInt
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
+import android.graphics.Paint
+
+// Helper functions for converting trend data
+fun List<DailyTrend>.toDailyTrendDataPoints(): List<TrendDataPoint> {
+    // Create a map of existing data
+    val dataMap = this.associateBy { it.day.toIntOrNull() ?: 0 }
+
+    // Get the number of days in current month
+    val calendar = Calendar.getInstance()
+    val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
+
+    // Create data points for all days of the month
+    return (1..daysInMonth).map { day ->
+        val trend = dataMap[day]
+        TrendDataPoint(
+            label = day.toString(),
+            income = trend?.income ?: 0.0,
+            expense = trend?.expense ?: 0.0
+        )
+    }
+}
+
+fun List<MonthlyTrend>.toMonthlyTrendDataPoints(): List<TrendDataPoint> {
+    val monthNames = arrayOf("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+    // Create a map of existing data
+    val dataMap = this.associateBy { it.month.toIntOrNull() ?: 0 }
+
+    // Create data points for all 12 months
+    return (1..12).map { monthNum ->
+        val trend = dataMap[monthNum]
+        TrendDataPoint(
+            label = monthNames[monthNum - 1],
+            income = trend?.income ?: 0.0,
+            expense = trend?.expense ?: 0.0
+        )
+    }
+}
+
+enum class TrendViewMode {
+    DAILY,
+    MONTHLY
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -30,6 +81,10 @@ fun StatisticsScreen(dao: TransactionDao) {
     val windowSize = rememberWindowSize()
     val scope = rememberCoroutineScope()
     val currencyFormat = NumberFormat.getCurrencyInstance(Locale("en", "PH"))
+
+    // Trend view mode state
+    var trendViewMode by remember { mutableStateOf(TrendViewMode.MONTHLY) }
+
     // Get current month range
     val calendar = Calendar.getInstance()
     calendar.set(Calendar.DAY_OF_MONTH, 1)
@@ -58,6 +113,15 @@ fun StatisticsScreen(dao: TransactionDao) {
     val categoryBreakdown by dao.getCategoryBreakdown(startOfMonth, endOfMonth)
         .collectAsState(initial = emptyList())
 
+    // Trend data
+    val dailyTrendDataRaw by dao.getDailyTrends(startOfMonth, endOfMonth)
+        .collectAsState(initial = emptyList())
+    val dailyTrendData = dailyTrendDataRaw.toDailyTrendDataPoints()
+
+    val monthlyTrendDataRaw by dao.getMonthlyTrends()
+        .collectAsState(initial = emptyList())
+    val monthlyTrendData = monthlyTrendDataRaw.toMonthlyTrendDataPoints()
+
     var showBudgetDialog by remember { mutableStateOf(false) }
 
     // Calculations
@@ -79,6 +143,7 @@ fun StatisticsScreen(dao: TransactionDao) {
         budgetUsedPercent >= 70 -> Color(0xFFFFB800) // Yellow
         else -> MaterialTheme.colorScheme.primary
     }
+
     val horizontalPadding = when (windowSize.width) {
         WindowSizeClass.Compact -> 16.dp
         WindowSizeClass.Medium -> 32.dp
@@ -90,6 +155,7 @@ fun StatisticsScreen(dao: TransactionDao) {
         WindowSizeClass.Medium -> 800.dp
         WindowSizeClass.Expanded -> 1000.dp
     }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -101,104 +167,342 @@ fun StatisticsScreen(dao: TransactionDao) {
                 .fillMaxSize()
                 .padding(padding),
             verticalArrangement = Arrangement.spacedBy(spacing),
-                    contentPadding = PaddingValues(bottom = spacing)
+            contentPadding = PaddingValues(bottom = spacing)
         ) {
-        // Header
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        text = "Statistics",
-                        style = MaterialTheme.typography.headlineMedium
-                    )
-                    Text(
-                        text = SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Date()),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                IconButton(onClick = { showBudgetDialog = true }) {
-                    Icon(Icons.Default.Edit, contentDescription = "Edit Budget")
+            // Header
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "Statistics",
+                            style = MaterialTheme.typography.headlineMedium
+                        )
+                        Text(
+                            text = SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Date()),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(onClick = { showBudgetDialog = true }) {
+                        Icon(Icons.Default.Edit, contentDescription = "Edit Budget")
+                    }
                 }
             }
-        }
 
-        // Budget Overview Card
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = statusColor.copy(alpha = 0.1f)
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = "Monthly Budget",
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        Text(
-                            text = currencyFormat.format(budget),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    // Progress bar
-                    LinearProgressIndicator(
-                        progress = (budgetUsedPercent / 100f).coerceIn(0f, 1f),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(12.dp),
-                        color = statusColor,
-                        trackColor = MaterialTheme.colorScheme.surfaceVariant
+            // Budget Overview Card
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = statusColor.copy(alpha = 0.1f)
                     )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp)
                     ) {
-                        Text(
-                            text = "Spent: ${currencyFormat.format(expenses)}",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        Text(
-                            text = "$budgetUsedPercent% used",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = statusColor,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Monthly Budget",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                text = currencyFormat.format(budget),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
 
-                    if (budget > 0) {
-                        Divider(modifier = Modifier.padding(vertical = 8.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Progress bar
+                        LinearProgressIndicator(
+                            progress = (budgetUsedPercent / 100f).coerceIn(0f, 1f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(12.dp),
+                            color = statusColor,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = "Remaining",
+                                text = "Spent: ${currencyFormat.format(expenses)}",
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(
-                                text = currencyFormat.format(remainingBudget.coerceAtLeast(0.0)),
+                                text = "$budgetUsedPercent% used",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = statusColor,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        if (budget > 0) {
+                            Divider(modifier = Modifier.padding(vertical = 8.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Remaining",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    text = currencyFormat.format(remainingBudget.coerceAtLeast(0.0)),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (remainingBudget > 0)
+                                        MaterialTheme.colorScheme.primary
+                                    else
+                                        MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Warning Card
+            if (budget > 0 && projectedOverBudget > 0) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = "Warning",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(32.dp)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "Budget Warning!",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                                Text(
+                                    text = "At your current rate of ${currencyFormat.format(dailyAvg)}/day, you'll spend ${
+                                        currencyFormat.format(
+                                            projectedMonthlyExpense
+                                        )
+                                    } this month (${currencyFormat.format(projectedOverBudget)} over budget).",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Trend Graph Card - NEW
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Trend Analysis",
                                 style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = if (remainingBudget > 0)
+                                fontWeight = FontWeight.Bold
+                            )
+
+                            // Toggle buttons for day/month view
+                            Row {
+                                FilterChip(
+                                    selected = trendViewMode == TrendViewMode.DAILY,
+                                    onClick = { trendViewMode = TrendViewMode.DAILY },
+                                    label = { Text("Daily") },
+                                    modifier = Modifier.padding(end = 4.dp)
+                                )
+                                FilterChip(
+                                    selected = trendViewMode == TrendViewMode.MONTHLY,
+                                    onClick = { trendViewMode = TrendViewMode.MONTHLY },
+                                    label = { Text("Monthly") }
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // Graph
+                        when (trendViewMode) {
+                            TrendViewMode.DAILY -> {
+                                if (dailyTrendData.isNotEmpty()) {
+                                    TrendLineGraph(
+                                        data = dailyTrendData,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(220.dp),
+                                        currencyFormat = currencyFormat,
+                                        isMonthly = false
+                                    )
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(220.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "No daily data available",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                            TrendViewMode.MONTHLY -> {
+                                if (monthlyTrendData.isNotEmpty()) {
+                                    TrendLineGraph(
+                                        data = monthlyTrendData,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(220.dp),
+                                        currencyFormat = currencyFormat,
+                                        isMonthly = true
+                                    )
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(220.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "No monthly data available",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Legend
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            LegendItem(
+                                color = Color(0xFF4CAF50),
+                                label = "Income"
+                            )
+                            Spacer(modifier = Modifier.width(16.dp))
+                            LegendItem(
+                                color = Color(0xFFF44336),
+                                label = "Expenses"
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Daily Insights
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "Daily Insights",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        InsightRow(
+                            label = "Average per day",
+                            value = currencyFormat.format(dailyAvg),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+
+                        if (budget > 0) {
+                            InsightRow(
+                                label = "Budget per day (remaining)",
+                                value = currencyFormat.format(dailyBudgetRemaining),
+                                color = if (dailyAvg > dailyBudgetRemaining)
+                                    MaterialTheme.colorScheme.error
+                                else
+                                    MaterialTheme.colorScheme.primary
+                            )
+
+                            InsightRow(
+                                label = "Projected monthly total",
+                                value = currencyFormat.format(projectedMonthlyExpense),
+                                color = if (projectedMonthlyExpense > budget)
+                                    MaterialTheme.colorScheme.error
+                                else
+                                    MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        InsightRow(
+                            label = "Days remaining in month",
+                            value = "$daysRemaining days",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            // Income vs Expense
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "Income vs Expenses",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            StatBox(
+                                label = "Income",
+                                value = currencyFormat.format(income),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            StatBox(
+                                label = "Expenses",
+                                value = currencyFormat.format(expenses),
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            StatBox(
+                                label = "Balance",
+                                value = currencyFormat.format(income - expenses),
+                                color = if (income - expenses >= 0)
                                     MaterialTheme.colorScheme.primary
                                 else
                                     MaterialTheme.colorScheme.error
@@ -207,174 +511,46 @@ fun StatisticsScreen(dao: TransactionDao) {
                     }
                 }
             }
-        }
 
-        // Warning Card
-        if (budget > 0 && projectedOverBudget > 0) {
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Warning,
-                            contentDescription = "Warning",
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(32.dp)
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
+            // Category Breakdown
+            if (categoryBreakdown.isNotEmpty()) {
+                item {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(16.dp)) {
                             Text(
-                                text = "Budget Warning!",
+                                text = "Spending by Category",
                                 style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.error
+                                fontWeight = FontWeight.Bold
                             )
-                            Text(
-                                text = "At your current rate of ${currencyFormat.format(dailyAvg)}/day, you'll spend ${
-                                    currencyFormat.format(
-                                        projectedMonthlyExpense
-                                    )
-                                } this month (${currencyFormat.format(projectedOverBudget)} over budget).",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onErrorContainer
-                            )
-                        }
-                    }
-                }
-            }
-        }
 
-        // Daily Insights
-        item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "Daily Insights",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
+                            Spacer(modifier = Modifier.height(12.dp))
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                            categoryBreakdown.forEach { category ->
+                                val percentage =
+                                    if (expenses > 0) (category.total / expenses * 100).roundToInt() else 0
 
-                    InsightRow(
-                        label = "Average per day",
-                        value = currencyFormat.format(dailyAvg),
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-
-                    if (budget > 0) {
-                        InsightRow(
-                            label = "Budget per day (remaining)",
-                            value = currencyFormat.format(dailyBudgetRemaining),
-                            color = if (dailyAvg > dailyBudgetRemaining)
-                                MaterialTheme.colorScheme.error
-                            else
-                                MaterialTheme.colorScheme.primary
-                        )
-
-                        InsightRow(
-                            label = "Projected monthly total",
-                            value = currencyFormat.format(projectedMonthlyExpense),
-                            color = if (projectedMonthlyExpense > budget)
-                                MaterialTheme.colorScheme.error
-                            else
-                                MaterialTheme.colorScheme.primary
-                        )
-                    }
-
-                    InsightRow(
-                        label = "Days remaining in month",
-                        value = "$daysRemaining days",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
-
-        // Income vs Expense
-        item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "Income vs Expenses",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly
-                    ) {
-                        StatBox(
-                            label = "Income",
-                            value = currencyFormat.format(income),
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        StatBox(
-                            label = "Expenses",
-                            value = currencyFormat.format(expenses),
-                            color = MaterialTheme.colorScheme.error
-                        )
-                        StatBox(
-                            label = "Balance",
-                            value = currencyFormat.format(income - expenses),
-                            color = if (income - expenses >= 0)
-                                MaterialTheme.colorScheme.primary
-                            else
-                                MaterialTheme.colorScheme.error
-                        )
-                    }
-                }
-            }
-        }
-
-        // Category Breakdown
-        if (categoryBreakdown.isNotEmpty()) {
-            item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "Spending by Category",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        categoryBreakdown.forEach { category ->
-                            val percentage =
-                                if (expenses > 0) (category.total / expenses * 100).roundToInt() else 0
-
-                            Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(
-                                        text = category.category,
-                                        style = MaterialTheme.typography.bodyMedium
-                                    )
-                                    Text(
-                                        text = "${currencyFormat.format(category.total)} ($percentage%)",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Bold
+                                Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = category.category,
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                        Text(
+                                            text = "${currencyFormat.format(category.total)} ($percentage%)",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                    LinearProgressIndicator(
+                                        progress = percentage / 100f,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(8.dp)
                                     )
                                 }
-                                LinearProgressIndicator(
-                                    progress = percentage / 100f,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(8.dp)
-                                )
                             }
                         }
                     }
@@ -382,8 +558,6 @@ fun StatisticsScreen(dao: TransactionDao) {
             }
         }
     }
-
-}
 
     // Budget Edit Dialog
     if (showBudgetDialog) {
@@ -399,6 +573,214 @@ fun StatisticsScreen(dao: TransactionDao) {
         )
     }
 }
+
+@Composable
+fun TrendLineGraph(
+    data: List<TrendDataPoint>,
+    modifier: Modifier = Modifier,
+    currencyFormat: NumberFormat,
+    isMonthly: Boolean
+) {
+    val incomeColor = Color(0xFF4CAF50)
+    val expenseColor = Color(0xFFF44336)
+    val gridColor = Color.Gray.copy(alpha = 0.2f)
+
+    Canvas(modifier = modifier.padding(top = 8.dp, bottom = 8.dp, start = 4.dp, end = 4.dp)) {
+        if (data.isEmpty()) return@Canvas
+
+        val width = size.width
+        val height = size.height
+
+        // Padding for labels
+        val paddingLeft = 60f
+        val paddingRight = 20f
+        val paddingTop = 20f
+        val paddingBottom = 40f
+
+        val graphWidth = width - paddingLeft - paddingRight
+        val graphHeight = height - paddingTop - paddingBottom
+
+        // Find max value for scaling
+        val maxIncome = data.maxOfOrNull { it.income } ?: 0.0
+        val maxExpense = data.maxOfOrNull { it.expense } ?: 0.0
+        val maxValue = maxOf(maxIncome, maxExpense).toFloat()
+
+        if (maxValue == 0f) {
+            // Draw "No data" message
+            drawContext.canvas.nativeCanvas.apply {
+                drawText(
+                    "No transactions yet",
+                    width / 2,
+                    height / 2,
+                    Paint().apply {
+                        color = android.graphics.Color.GRAY
+                        textSize = 32f
+                        textAlign = Paint.Align.CENTER
+                    }
+                )
+            }
+            return@Canvas
+        }
+
+        // Draw horizontal grid lines and Y-axis labels
+        val gridLines = 4
+        for (i in 0..gridLines) {
+            val y = paddingTop + (graphHeight * i / gridLines)
+            val value = maxValue * (1 - i.toFloat() / gridLines)
+
+            // Grid line
+            drawLine(
+                color = gridColor,
+                start = Offset(paddingLeft, y),
+                end = Offset(width - paddingRight, y),
+                strokeWidth = 1f
+            )
+
+            // Y-axis label - shortened format
+            val labelText = when {
+                value >= 10000 -> "₱${(value / 1000).toInt()}k"
+                value >= 1000 -> "₱${(value / 1000).roundToInt()}k"
+                else -> "₱${value.toInt()}"
+            }
+
+            drawContext.canvas.nativeCanvas.apply {
+                drawText(
+                    labelText,
+                    paddingLeft - 10f,
+                    y + 5f,
+                    Paint().apply {
+                        color = android.graphics.Color.GRAY
+                        textSize = 20f
+                        textAlign = Paint.Align.RIGHT
+                    }
+                )
+            }
+        }
+
+        // Calculate points
+        val stepX = if (data.size > 1) graphWidth / (data.size - 1) else graphWidth
+
+        val incomePoints = data.mapIndexed { index, point ->
+            val x = paddingLeft + (index * stepX)
+            val normalizedValue = if (maxValue > 0) point.income.toFloat() / maxValue else 0f
+            val y = paddingTop + graphHeight * (1 - normalizedValue)
+            Offset(x, y)
+        }
+
+        val expensePoints = data.mapIndexed { index, point ->
+            val x = paddingLeft + (index * stepX)
+            val normalizedValue = if (maxValue > 0) point.expense.toFloat() / maxValue else 0f
+            val y = paddingTop + graphHeight * (1 - normalizedValue)
+            Offset(x, y)
+        }
+
+        // Draw income line
+        if (incomePoints.size > 1) {
+            val incomePath = Path().apply {
+                moveTo(incomePoints[0].x, incomePoints[0].y)
+                for (i in 1 until incomePoints.size) {
+                    lineTo(incomePoints[i].x, incomePoints[i].y)
+                }
+            }
+            drawPath(
+                path = incomePath,
+                color = incomeColor,
+                style = Stroke(width = 3f, cap = StrokeCap.Round)
+            )
+        }
+
+        // Draw expense line
+        if (expensePoints.size > 1) {
+            val expensePath = Path().apply {
+                moveTo(expensePoints[0].x, expensePoints[0].y)
+                for (i in 1 until expensePoints.size) {
+                    lineTo(expensePoints[i].x, expensePoints[i].y)
+                }
+            }
+            drawPath(
+                path = expensePath,
+                color = expenseColor,
+                style = Stroke(width = 3f, cap = StrokeCap.Round)
+            )
+        }
+
+        // Draw points on lines
+        incomePoints.forEach { point ->
+            drawCircle(
+                color = incomeColor,
+                radius = 4f,
+                center = point
+            )
+        }
+
+        expensePoints.forEach { point ->
+            drawCircle(
+                color = expenseColor,
+                radius = 4f,
+                center = point
+            )
+        }
+
+        // Draw X-axis labels - show fewer labels for daily view, all months for monthly view
+        val labelInterval = when {
+            isMonthly -> 1 // Show all 12 months
+            data.size > 20 -> 5 // Show every 5th day
+            data.size > 15 -> 3 // Show every 3rd day
+            else -> 2 // Show every other day
+        }
+
+        data.forEachIndexed { index, point ->
+            val shouldShowLabel = if (isMonthly) {
+                // For monthly view, show all months
+                true
+            } else {
+                // For daily view, show based on interval or first/last day
+                index % labelInterval == 0 || index == data.size - 1
+            }
+
+            if (shouldShowLabel) {
+                val x = paddingLeft + (index * stepX)
+                drawContext.canvas.nativeCanvas.apply {
+                    drawText(
+                        point.label,
+                        x,
+                        height - paddingBottom + 25f,
+                        Paint().apply {
+                            color = android.graphics.Color.GRAY
+                            textSize = if (isMonthly) 18f else 20f // Smaller for monthly to fit all
+                            textAlign = Paint.Align.CENTER
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun LegendItem(color: Color, label: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(16.dp)
+                .padding(end = 4.dp)
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                drawCircle(color = color)
+            }
+        }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+
+data class TrendDataPoint(
+    val label: String,
+    val income: Double,
+    val expense: Double
+)
 
 @Composable
 fun InsightRow(label: String, value: String, color: Color) {
