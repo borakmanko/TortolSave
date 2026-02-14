@@ -70,6 +70,9 @@ dependencies {
     // Icons - Using version catalog
     implementation(libs.androidx.compose.material.icons.extended)
 
+    // Gson for JSON export/import
+    implementation("com.google.code.gson:gson:2.11.0")
+
     // Existing test dependencies
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

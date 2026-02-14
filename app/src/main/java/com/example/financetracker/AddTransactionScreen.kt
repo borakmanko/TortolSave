@@ -27,14 +27,30 @@ fun AddTransactionScreen(dao: TransactionDao) {
     var amount by remember { mutableStateOf("") }
     var type by remember { mutableStateOf("Expense") }
     var category by remember { mutableStateOf("") }
-    var customCategory by remember { mutableStateOf("") } // Add this state
+    var customCategory by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var selectedDate by remember { mutableStateOf(System.currentTimeMillis()) }
+    var selectedBankId by remember { mutableStateOf(0) }
     var showDatePicker by remember { mutableStateOf(false) }
     var showSuccessMessage by remember { mutableStateOf(false) }
+    var showBankError by remember { mutableStateOf(false) }
+    var showInsufficientBalanceError by remember { mutableStateOf(false) }
 
     val scope = rememberCoroutineScope()
     val dateFormat = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
+
+    // Get banks
+    val banks by dao.getAllBanks().collectAsState(initial = emptyList())
+    val selectedBank = banks.find { it.id == selectedBankId }
+
+    // Get selected bank balance
+    val selectedBankBalance by if (selectedBankId > 0) {
+        dao.getBankBalance(selectedBankId).collectAsState(initial = 0.0)
+    } else {
+        remember { mutableStateOf(0.0) }
+    }
+
+    var showBankDropdown by remember { mutableStateOf(false) }
 
     val expenseCategories = listOf("Food", "Transport", "Shopping", "Bills", "Entertainment", "Health", "Education", "Other")
     val incomeCategories = listOf("Salary", "Freelance", "Business", "Investment", "Gift", "Other")
@@ -88,7 +104,7 @@ fun AddTransactionScreen(dao: TransactionDao) {
                     onClick = {
                         type = "Expense"
                         category = ""
-                        customCategory = "" // Reset custom category
+                        customCategory = ""
                     },
                     label = { Text("Expense", style = MaterialTheme.typography.bodyMedium) },
                     modifier = Modifier.weight(1f).padding(end = 4.dp),
@@ -102,7 +118,7 @@ fun AddTransactionScreen(dao: TransactionDao) {
                     onClick = {
                         type = "Income"
                         category = ""
-                        customCategory = "" // Reset custom category
+                        customCategory = ""
                     },
                     label = { Text("Income", style = MaterialTheme.typography.bodyMedium) },
                     modifier = Modifier.weight(1f).padding(start = 4.dp),
@@ -116,12 +132,81 @@ fun AddTransactionScreen(dao: TransactionDao) {
 
         Spacer(modifier = Modifier.height(spacing))
 
+        // Bank selector - NEW
+        Text(
+            text = "Bank/Wallet",
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+
+        ExposedDropdownMenuBox(
+            expanded = showBankDropdown,
+            onExpandedChange = { showBankDropdown = it }
+        ) {
+            OutlinedTextField(
+                value = selectedBank?.let { "${it.icon} ${it.name}" } ?: "Select bank",
+                onValueChange = {},
+                readOnly = true,
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showBankDropdown) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .menuAnchor(),
+                colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+                isError = showBankError
+            )
+            ExposedDropdownMenu(
+                expanded = showBankDropdown,
+                onDismissRequest = { showBankDropdown = false }
+            ) {
+                if (banks.isEmpty()) {
+                    DropdownMenuItem(
+                        text = { Text("No banks available. Create one first!") },
+                        onClick = { showBankDropdown = false },
+                        enabled = false
+                    )
+                } else {
+                    banks.forEach { bank ->
+                        DropdownMenuItem(
+                            text = { Text("${bank.icon} ${bank.name}") },
+                            onClick = {
+                                selectedBankId = bank.id
+                                showBankDropdown = false
+                                showBankError = false
+                                showInsufficientBalanceError = false
+                            }
+                        )
+                    }
+                }
+            }
+        }
+
+        if (showBankError) {
+            Text(
+                text = "Please select a bank",
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(start = 4.dp, top = 4.dp)
+            )
+        }
+
+        if (showInsufficientBalanceError) {
+            Text(
+                text = "Insufficient balance in ${selectedBank?.name}",
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(start = 4.dp, top = 4.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(spacing))
+
         // Amount input
         OutlinedTextField(
             value = amount,
             onValueChange = {
                 if (it.isEmpty() || it.matches(Regex("^\\d*\\.?\\d*$"))) {
                     amount = it
+                    showInsufficientBalanceError = false
                 }
             },
             label = { Text("Amount") },
@@ -155,7 +240,7 @@ fun AddTransactionScreen(dao: TransactionDao) {
             onCategorySelected = {
                 category = it
                 if (it != "Other") {
-                    customCategory = "" // Clear custom category if not "Other"
+                    customCategory = ""
                 }
             },
             screenSize = screenSize,
@@ -164,7 +249,7 @@ fun AddTransactionScreen(dao: TransactionDao) {
 
         Spacer(modifier = Modifier.height(spacing))
 
-        // Custom category input - FIXED VERSION
+        // Custom category input
         if (category == "Other") {
             OutlinedTextField(
                 value = customCategory,
@@ -224,11 +309,10 @@ fun AddTransactionScreen(dao: TransactionDao) {
 
         Spacer(modifier = Modifier.height(spacing * 2))
 
-        // Save button - UPDATED to use customCategory when "Other" is selected
+        // Save button
         Button(
             onClick = {
                 val amountValue = amount.toDoubleOrNull()
-                // Determine the final category to save
                 val finalCategory = if (category == "Other" && customCategory.isNotBlank()) {
                     customCategory
                 } else if (category != "Other") {
@@ -237,27 +321,47 @@ fun AddTransactionScreen(dao: TransactionDao) {
                     ""
                 }
 
-                if (amountValue != null && amountValue > 0 && finalCategory.isNotBlank()) {
-                    scope.launch {
-                        dao.insert(
-                            Transaction(
-                                amount = amountValue,
-                                type = type,
-                                category = finalCategory,
-                                description = description,
-                                date = selectedDate
-                            )
-                        )
-                        amount = ""
-                        description = ""
-                        category = ""
-                        customCategory = ""
-                        selectedDate = System.currentTimeMillis()
-                        showSuccessMessage = true
-
-                        // Scroll to top to show success message
+                // Validation
+                when {
+                    selectedBankId == 0 -> {
+                        showBankError = true
+                        showInsufficientBalanceError = false
+                    }
+                    amountValue == null || amountValue <= 0 -> {
+                        // Amount validation handled by button enabled state
+                    }
+                    type == "Expense" && amountValue > (selectedBankBalance ?: 0.0) -> {
+                        showInsufficientBalanceError = true
+                        showBankError = false
+                    }
+                    finalCategory.isBlank() -> {
+                        // Category validation handled by button enabled state
+                    }
+                    else -> {
                         scope.launch {
-                            scrollState.animateScrollTo(0)
+                            dao.insert(
+                                Transaction(
+                                    amount = amountValue,
+                                    type = type,
+                                    category = finalCategory,
+                                    description = description,
+                                    date = selectedDate,
+                                    bankId = selectedBankId
+                                )
+                            )
+                            amount = ""
+                            description = ""
+                            category = ""
+                            customCategory = ""
+                            selectedBankId = 0
+                            selectedDate = System.currentTimeMillis()
+                            showSuccessMessage = true
+                            showBankError = false
+                            showInsufficientBalanceError = false
+
+                            scope.launch {
+                                scrollState.animateScrollTo(0)
+                            }
                         }
                     }
                 }
@@ -298,7 +402,6 @@ fun AddTransactionScreen(dao: TransactionDao) {
             }
         }
 
-        // Add bottom padding to ensure button is visible when scrolled
         Spacer(modifier = Modifier.height(spacing))
     }
 
@@ -314,7 +417,6 @@ fun AddTransactionScreen(dao: TransactionDao) {
     }
 }
 
-// Helper composable for category chips with adaptive layout
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CategoryChipsGrid(
@@ -355,7 +457,6 @@ fun CategoryChipsGrid(
                         modifier = Modifier.weight(1f)
                     )
                 }
-                // Add empty space for incomplete rows
                 repeat(chipsPerRow - rowCategories.size) {
                     Spacer(modifier = Modifier.weight(1f))
                 }

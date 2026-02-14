@@ -1,4 +1,4 @@
-//MainActivity.kt
+// MainActivity.kt
 package com.example.financetracker
 
 import android.os.Bundle
@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.sp
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -20,11 +21,7 @@ class MainActivity : ComponentActivity() {
         val database = AppDatabase.getDatabase(applicationContext)
         val dao = database.transactionDao()
 
-        setContent {
-            MaterialTheme {
-                FinanceTrackerApp(dao)
-            }
-        }
+        setContent { MaterialTheme { FinanceTrackerApp(dao) } }
     }
 }
 
@@ -35,56 +32,51 @@ fun FinanceTrackerApp(dao: TransactionDao) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
-    val items = listOf(
-        Screen.Home,
-        Screen.AddTransaction,
-        Screen.QuickAdd,
-        Screen.Statistics,
-        Screen.Manage
-    )
+    val items =
+            listOf(
+                    Screen.Home,
+                    Screen.AddTransaction,
+                    Screen.QuickAdd,
+                    Screen.Banks, // NEW
+                    Screen.Statistics,
+                    Screen.Manage
+            )
 
     Scaffold(
-        bottomBar = {
-            NavigationBar {
-                items.forEach { screen ->
-                    NavigationBarItem(
-                        icon = { Icon(screen.icon, contentDescription = screen.title) },
-                        label = { Text(screen.title) },
-                        selected = currentRoute == screen.route,
-                        onClick = {
-                            navController.navigate(screen.route) {
-                                popUpTo(navController.graph.startDestinationId) {
-                                    saveState = true
+            bottomBar = {
+                NavigationBar {
+                    items.forEach { screen ->
+                        NavigationBarItem(
+                                icon = { Icon(screen.icon, contentDescription = screen.title) },
+                                label = { Text(screen.title, fontSize = 10.sp) },
+                                selected = currentRoute == screen.route,
+                                onClick = {
+                                    navController.navigate(screen.route) {
+                                        popUpTo(navController.graph.startDestinationId) {
+                                            saveState = true
+                                        }
+                                        launchSingleTop = true
+                                        restoreState = true
+                                    }
                                 }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        }
-                    )
+                        )
+                    }
                 }
             }
-        }
     ) { innerPadding ->
         NavHost(
-            navController = navController,
-            startDestination = Screen.Home.route,
-            modifier = Modifier.padding(innerPadding)
+                navController = navController,
+                startDestination = Screen.Home.route,
+                modifier = Modifier.padding(innerPadding)
         ) {
-            composable(Screen.Home.route) {
-                HomeScreen(dao)
+            composable(Screen.Home.route) { HomeScreen(dao) }
+            composable(Screen.AddTransaction.route) { AddTransactionScreen(dao) }
+            composable(Screen.QuickAdd.route) { QuickAddScreen(dao) }
+            composable(Screen.Banks.route) { // NEW
+                BanksDashboardScreen(dao)
             }
-            composable(Screen.AddTransaction.route) {
-                AddTransactionScreen(dao)
-            }
-            composable(Screen.QuickAdd.route) {
-                QuickAddScreen(dao)
-            }
-            composable(Screen.Manage.route) {
-                ManageScreen(dao)
-            }
-            composable(Screen.Statistics.route) {
-                StatisticsScreen(dao)
-            }
+            composable(Screen.Manage.route) { ManageScreen(dao) }
+            composable(Screen.Statistics.route) { StatisticsScreen(dao) }
         }
     }
 }

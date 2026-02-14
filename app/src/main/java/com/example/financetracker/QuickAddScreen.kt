@@ -16,19 +16,20 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import java.text.NumberFormat
 import java.util.*
-import androidx.compose.foundation.layout.PaddingValues
+import kotlinx.coroutines.flow.first
 @Composable
 fun QuickAddButton(
     template: TransactionTemplate,
+    bankName: String,
     onClick: () -> Unit
 ) {
     val screenSize = rememberPhoneScreenSize()
     val currencyFormat = NumberFormat.getCurrencyInstance(Locale("en", "PH"))
 
     val buttonHeight = when (screenSize) {
-        PhoneScreenSize.Small -> 100.dp
-        PhoneScreenSize.Regular -> 120.dp
-        PhoneScreenSize.Large -> 140.dp
+        PhoneScreenSize.Small -> 120.dp
+        PhoneScreenSize.Regular -> 140.dp
+        PhoneScreenSize.Large -> 160.dp
     }
 
     val titleStyle = when (screenSize) {
@@ -79,14 +80,17 @@ fun QuickAddButton(
                     text = template.category,
                     style = MaterialTheme.typography.bodySmall
                 )
+                if (bankName.isNotEmpty()) {
+                    Text(
+                        text = "→ $bankName",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }
 }
-
-// Update QuickAddScreen to use responsive padding
-// QuickAddScreen.kt - LazyVerticalGrid already handles scrolling
-// No changes needed, but ensure it has bottom padding for the last items
 
 @Composable
 fun QuickAddScreen(dao: TransactionDao) {
@@ -95,8 +99,16 @@ fun QuickAddScreen(dao: TransactionDao) {
     val spacing = getResponsiveSpacing()
 
     val templates by dao.getAllTemplates().collectAsState(initial = emptyList())
+    val banks by dao.getAllBanks().collectAsState(initial = emptyList())
+
     var showAddTemplateDialog by remember { mutableStateOf(false) }
+    var showInsufficientBalanceDialog by remember { mutableStateOf(false) }
+    var insufficientBalanceMessage by remember { mutableStateOf("") }
+
     val scope = rememberCoroutineScope()
+
+    // Create a map of bankId to bank name
+    val bankMap = banks.associateBy { it.id }
 
     Column(
         modifier = Modifier
@@ -143,25 +155,46 @@ fun QuickAddScreen(dao: TransactionDao) {
                 )
             }
         } else {
-            // LazyVerticalGrid handles scrolling automatically
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
                 horizontalArrangement = Arrangement.spacedBy(spacing),
                 verticalArrangement = Arrangement.spacedBy(spacing),
-                contentPadding = PaddingValues(bottom = spacing) // Add bottom padding
+                contentPadding = PaddingValues(bottom = spacing)
             ) {
                 items(templates, key = { it.id }) { template ->
+                    val bankName = bankMap[template.bankId]?.let { "${it.icon} ${it.name}" } ?: ""
+
                     QuickAddButton(
                         template = template,
+                        bankName = bankName,
                         onClick = {
                             scope.launch {
+                                // Check if bank exists
+                                if (template.bankId == 0 || bankMap[template.bankId] == null) {
+                                    insufficientBalanceMessage = "Bank not found. Please edit this template."
+                                    showInsufficientBalanceDialog = true
+                                    return@launch
+                                }
+
+                                // Check balance for expenses
+                                if (template.type == "Expense") {
+                                    val balance = dao.getBankBalance(template.bankId).first() ?: 0.0
+                                    if (template.amount > balance) {
+                                        insufficientBalanceMessage = "Insufficient balance in ${bankMap[template.bankId]?.name}. Available: ₱$balance"
+                                        showInsufficientBalanceDialog = true
+                                        return@launch
+                                    }
+                                }
+
+                                // Add transaction
                                 dao.insert(
                                     Transaction(
                                         amount = template.amount,
                                         type = template.type,
                                         category = template.category,
                                         description = template.description,
-                                        date = System.currentTimeMillis()
+                                        date = System.currentTimeMillis(),
+                                        bankId = template.bankId
                                     )
                                 )
                             }
@@ -174,6 +207,7 @@ fun QuickAddScreen(dao: TransactionDao) {
 
     if (showAddTemplateDialog) {
         AddTemplateDialog(
+            banks = banks,
             onDismiss = { showAddTemplateDialog = false },
             onSave = { template ->
                 scope.launch {
@@ -183,10 +217,26 @@ fun QuickAddScreen(dao: TransactionDao) {
             }
         )
     }
+
+    // Insufficient balance dialog
+    if (showInsufficientBalanceDialog) {
+        AlertDialog(
+            onDismissRequest = { showInsufficientBalanceDialog = false },
+            title = { Text("Cannot Add Transaction") },
+            text = { Text(insufficientBalanceMessage) },
+            confirmButton = {
+                TextButton(onClick = { showInsufficientBalanceDialog = false }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
 }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddTemplateDialog(
+    banks: List<Bank>,
     onDismiss: () -> Unit,
     onSave: (TransactionTemplate) -> Unit
 ) {
@@ -195,6 +245,11 @@ fun AddTemplateDialog(
     var type by remember { mutableStateOf("Expense") }
     var category by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
+    var selectedBankId by remember { mutableStateOf(0) }
+    var showBankError by remember { mutableStateOf(false) }
+
+    var showBankDropdown by remember { mutableStateOf(false) }
+    val selectedBank = banks.find { it.id == selectedBankId }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -206,20 +261,22 @@ fun AddTemplateDialog(
                     onValueChange = { name = it },
                     label = { Text("Button Name") },
                     placeholder = { Text("e.g., Jeepney Ride") },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 OutlinedTextField(
                     value = amount,
                     onValueChange = { amount = it },
                     label = { Text("Amount") },
                     placeholder = { Text("e.g., 13") },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 Row(modifier = Modifier.fillMaxWidth()) {
                     FilterChip(
@@ -235,43 +292,115 @@ fun AddTemplateDialog(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 OutlinedTextField(
                     value = category,
                     onValueChange = { category = it },
                     label = { Text("Category") },
                     placeholder = { Text("e.g., Transport") },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 OutlinedTextField(
                     value = description,
                     onValueChange = { description = it },
                     label = { Text("Description") },
                     placeholder = { Text("e.g., Daily jeepney") },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
                 )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Bank selector
+                Text(
+                    "Bank/Wallet",
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+
+                ExposedDropdownMenuBox(
+                    expanded = showBankDropdown,
+                    onExpandedChange = { showBankDropdown = it }
+                ) {
+                    OutlinedTextField(
+                        value = selectedBank?.let { "${it.icon} ${it.name}" } ?: "Select bank",
+                        onValueChange = {},
+                        readOnly = true,
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showBankDropdown) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor(),
+                        colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+                        isError = showBankError
+                    )
+                    ExposedDropdownMenu(
+                        expanded = showBankDropdown,
+                        onDismissRequest = { showBankDropdown = false }
+                    ) {
+                        if (banks.isEmpty()) {
+                            DropdownMenuItem(
+                                text = { Text("No banks available") },
+                                onClick = { showBankDropdown = false },
+                                enabled = false
+                            )
+                        } else {
+                            banks.forEach { bank ->
+                                DropdownMenuItem(
+                                    text = { Text("${bank.icon} ${bank.name}") },
+                                    onClick = {
+                                        selectedBankId = bank.id
+                                        showBankDropdown = false
+                                        showBankError = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (showBankError) {
+                    Text(
+                        text = "Please select a bank",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(start = 4.dp, top = 4.dp)
+                    )
+                }
             }
         },
         confirmButton = {
             Button(
                 onClick = {
                     val amountValue = amount.toDoubleOrNull()
-                    if (amountValue != null && name.isNotBlank()) {
-                        onSave(
-                            TransactionTemplate(
-                                name = name,
-                                amount = amountValue,
-                                type = type,
-                                category = category,
-                                description = description
+                    when {
+                        name.isBlank() || amountValue == null || category.isBlank() -> {
+                            // Validation will be handled by enabled state
+                        }
+                        selectedBankId == 0 -> {
+                            showBankError = true
+                        }
+                        else -> {
+                            onSave(
+                                TransactionTemplate(
+                                    name = name,
+                                    amount = amountValue,
+                                    type = type,
+                                    category = category,
+                                    description = description,
+                                    bankId = selectedBankId
+                                )
                             )
-                        )
+                        }
                     }
-                }
+                },
+                enabled = name.isNotBlank() &&
+                        amount.toDoubleOrNull() != null &&
+                        category.isNotBlank()
             ) {
                 Text("Create")
             }
