@@ -146,6 +146,31 @@ interface TransactionDao {
     )
     fun getCategoryBreakdown(startOfMonth: Long, endOfMonth: Long): Flow<List<CategoryTotal>>
 
+    // All-time category breakdown with normalized grouping (case & space insensitive)
+    @Query(
+            """
+        SELECT MIN(category) as category, SUM(amount) as total 
+        FROM transactions 
+        WHERE type = 'Expense' 
+        GROUP BY LOWER(REPLACE(category, ' ', '')) 
+        ORDER BY total DESC
+    """
+    )
+    fun getAllCategoryBreakdown(): Flow<List<CategoryTotal>>
+
+    // Monthly category breakdown with normalized grouping (case & space insensitive)
+    @Query(
+            """
+        SELECT MIN(category) as category, SUM(amount) as total 
+        FROM transactions 
+        WHERE type = 'Expense' 
+        AND date >= :startDate AND date <= :endDate
+        GROUP BY LOWER(REPLACE(category, ' ', '')) 
+        ORDER BY total DESC
+    """
+    )
+    fun getMonthCategoryBreakdown(startDate: Long, endDate: Long): Flow<List<CategoryTotal>>
+
     // Daily trend data (for current month)
     @Query(
             """
@@ -160,6 +185,22 @@ interface TransactionDao {
     """
     )
     fun getDailyTrends(startDate: Long, endDate: Long): Flow<List<DailyTrend>>
+
+    // All-time daily trend data (every day from first to last transaction)
+    @Query(
+            """
+        SELECT 
+            strftime('%Y-%m-%d', datetime(date/1000, 'unixepoch', 'localtime')) as fullDate,
+            strftime('%m', datetime(date/1000, 'unixepoch', 'localtime')) as month,
+            strftime('%Y', datetime(date/1000, 'unixepoch', 'localtime')) as year,
+            COALESCE(SUM(CASE WHEN type = 'Income' THEN amount ELSE 0 END), 0) as income,
+            COALESCE(SUM(CASE WHEN type = 'Expense' THEN amount ELSE 0 END), 0) as expense
+        FROM transactions
+        GROUP BY fullDate
+        ORDER BY fullDate ASC
+    """
+    )
+    fun getAllDailyTrends(): Flow<List<AllTimeDailyTrend>>
 
     // Monthly trend data (all 12 months of current year)
     @Query(
@@ -266,3 +307,11 @@ data class MonthlyTrend(
 
 // NEW: Data class for bank with balance
 data class BankWithBalance(val bank: Bank, val balance: Double, val transactionCount: Int)
+
+data class AllTimeDailyTrend(
+        val fullDate: String,
+        val month: String,
+        val year: String,
+        val income: Double,
+        val expense: Double
+)
